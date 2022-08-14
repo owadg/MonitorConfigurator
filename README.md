@@ -17,6 +17,8 @@ I will be using the Fyne library- (https://github.com/fyne-io/fyne) to build a G
 
 At least for windows syscalls, I will be using a method like this https://medium.com/@justen.walker/breaking-all-the-rules-using-go-to-call-windows-api-2cbfd8c79724
 
+On Linux, it looks like I will want to use the program XRANDR
+
 TODO: Find out how to best change configuration on linux DEs, at least KDE.
 
 TODO: Spin up a Fyne app
