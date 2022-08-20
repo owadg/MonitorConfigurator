@@ -15,12 +15,17 @@ import (
 	*/)
 
 const (
+	//enum display device consts
 	DISPLAY_DEVICE_ATTACHED_TO_DESKTOP = 1
+
+	//changedispsettings consts
+	CCHDEVICENAME = 32
+	CCHFORMNAME   = 32
 )
 
 var (
 	user32DLL                  = syscall.NewLazyDLL("user32.dll")
-	procChangeDisplaySettingsA = user32DLL.NewProc("ChangeDisplaySettingsAs")
+	procChangeDisplaySettingsA = user32DLL.NewProc("ChangeDisplaySettingsA")
 	procEnumDisplayDevicesA    = user32DLL.NewProc("EnumDisplayDevicesA") //params are (&Cstylestring, uint32, &Display_Device, uint32)
 )
 
@@ -34,6 +39,61 @@ type DispDevA struct {
 	StateFlags   uint32
 	DeviceID     [128]uint8
 	DeviceKey    [128]uint8
+}
+
+//https://docs.microsoft.com/en-us/windows/win32/api/windef/ns-windef-pointl
+type pointl struct {
+	x int32
+	y int32
+}
+
+//https://docs.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-devmodea
+type dummyStructName2 struct {
+	dmPosition           pointl
+	dmDisplayOrientation uint32
+	dmDisplayFixedOutput uint32
+}
+
+//https://docs.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-devmodea
+//must set dmSize when calling ChangeDisplaySettingsA
+//one thing i have not determined is how size of devmode will work
+type DevMode struct {
+	dmDeviceName    [CCHDEVICENAME]byte
+	dmSpecVersion   uint16
+	dmDriverVersion uint16
+	dmSize          uint16
+	dmDriverExtra   uint16
+	dmFields        uint32
+	//I have determined that since I will only be using this for display devices, I only need to include DUMMYSTRUCTNAME2 for this union here, so I will be doing that
+	dummyUnionName dummyStructName2
+	//note, I have determined short to be a 2 byte type, so int16, relevant comment because we have some shorts (will comment which are shorts)
+	dmColor         int16
+	dmDuplex        int16
+	dmYResolution   int16
+	dmTTOption      int16
+	dmCollate       int16
+	dmFormName      [CCHFORMNAME]byte
+	dmLogPixels     uint16
+	dmBitsPerPel    uint32
+	dmPelsWidth     uint32
+	dmPelsHeight    uint32
+	dummyUnionName2 uint32 //can be either dmDisplayFlags, or more likely, dmNup <-- change display settings uses this!
+
+	/*
+	  union {
+	    DWORD dmDisplayFlags;
+	    DWORD dmNup;
+	  } DUMMYUNIONNAME2;
+	  DWORD dmDisplayFrequency;
+	  DWORD dmICMMethod;
+	  DWORD dmICMIntent;
+	  DWORD dmMediaType;
+	  DWORD dmDitherType;
+	  DWORD dmReserved1;
+	  DWORD dmReserved2;
+	  DWORD dmPanningWidth;
+	  DWORD dmPanningHeight;
+	*/
 }
 
 // StringToCharPtr converts a Go string into pointer to a null-terminated cstring.
