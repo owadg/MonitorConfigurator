@@ -19,15 +19,19 @@ At least for windows syscalls, I will be using a method like this https://medium
 
 On Linux, it looks like I will want to use the program XRANDR
 
-TODO: Find out how to best change configuration on linux DEs, at least KDE.
+TODO: Find out how to best change configuration on linux DEs, at least KDE. -xrandr or krandr
 
-TODO: Spin up a Fyne app
+[x]: Spin up a Fyne app
 
-TODO: Get the system's display configuration
+[x]: Get the system's display configuration
 
 TODO: graphically display the system's display config (monitors, resolution, refresh rate, relative position)
+Name of config: ____
+Canvas displaying monitors
+options with dropdowns: such as refresh rate and resolution /maybe ddpi??
 
 TODO: graphically edit configs
+-Apply buttons that calls ChangeDisplaySettings based on info from the gui
 
 TODO: Save configs
 
