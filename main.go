@@ -10,6 +10,9 @@ const (
 	//enum display device consts
 	DISPLAY_DEVICE_ATTACHED_TO_DESKTOP = 1
 
+	//enum display settings
+	ENUM_CURRENT_SETTINGS = -1
+
 	//changedispsettings consts
 	CCHDEVICENAME = 32
 	CCHFORMNAME   = 32
@@ -23,6 +26,14 @@ var (
 	procEnumDisplayMonitors    = user32DLL.NewProc("EnumDisplayMonitors")  //params are HDC, LPCRECT, MONITORENUMPROC, LPARAM
 	procGetMonitorInfoA        = user32DLL.NewProc("GetMonitorInfoA")      //params are hmonitor, lpmonitorinfo
 )
+
+//has all the info we need to run the GUI application, including active monitors, their settings
+// and all possible settings
+type GUIInfo struct {
+	possibleSettings []SettingConfigList
+	currentSettings  []MonitorInfo
+	moreCurrSettings []DevMode
+}
 
 type SettingConfigList struct {
 	monitor      DispDevA
@@ -275,6 +286,17 @@ func getSettingsConfigList(monitors *[]DispDevA) []SettingConfigList {
 	return result
 }
 
+func getCurrentSettingsForCurrentMonitors() []DevMode {
+	monitors := getActiveMonitors()
+	result := make([]DevMode, 0)
+	for i := range monitors {
+		temp := DevMode{}
+		enumDisplaySettings(string(monitors[i].DeviceName[0:]), 0xFFFFFFFF, &temp)
+		result = append(result, temp)
+	}
+	return result
+}
+
 //I can enumerate the monitors I need here.
 //the callback function should be called per monitor
 //it's a little janky, and not giving me position info, so we use GetMonitor now!
@@ -320,6 +342,17 @@ func GetMonitorInfo(hMonitor syscall.Handle) MonitorInfo {
 	return temp
 }
 
+func GetAllMonitorInfo() []MonitorInfo {
+	result := make([]MonitorInfo, 1)
+
+	monitors := enumDisplayMonitors()
+	for i := range monitors.hmonitor {
+		result = append(result, GetMonitorInfo(monitors.hmonitor[i]))
+	}
+
+	return result
+}
+
 func main() {
 	/*
 		//BASE FUNCTIONALITY
@@ -337,18 +370,20 @@ func main() {
 		}
 	*/
 
-	//gets all active monitor
-	mons := getActiveMonitors()
-	for i := range mons {
-		dumpDispDev(&mons[i])
-	}
+	/*
+		//gets all active monitor
+		mons := getActiveMonitors()
+		for i := range mons {
+			dumpDispDev(&mons[i])
+		}
+	*/
 
 	/*
 		//basic test for calling enumDispSettings
 		monitors := getActiveMonitors()
 		dm := DevMode{}
 		fmt.Println(dm)
-		r1 := enumDisplaySettings(string(monitors[0].DeviceName[0:]), 0, &dm)
+		r1 := enumDisplaySettings(string(monitors[0].DeviceName[0:]), 0xFFFFFFFF, &dm)
 		fmt.Println("test, r1:", r1)
 		fmt.Println(dm)
 	*/
@@ -376,8 +411,64 @@ func main() {
 		fmt.Println(*(info.rect[0]))
 	*/
 
-	//test for display position
-	fmt.Println(GetMonitorInfo(enumDisplayMonitors().hmonitor[0]).rcWork)
-	fmt.Println(GetMonitorInfo(enumDisplayMonitors().hmonitor[1]).rcWork)
+	/*
+		//test for display position. Note this is based on virtual coordinate
+		fmt.Println(GetMonitorInfo(enumDisplayMonitors().hmonitor[0]).rcWork)
+		fmt.Println(GetMonitorInfo(enumDisplayMonitors().hmonitor[1]).rcWork)
+	*/
 
+	//getting curr settings
+	moreSet := getCurrentSettingsForCurrentMonitors()
+	for i := range moreSet {
+		dumpDevMode(&moreSet[i])
+	}
+
+	/*
+		//lets get the info we need for our GUI app
+		//monitors := getActiveMonitors()
+		possSet := getSettingsConfigList(&monitors)
+		currSet := GetAllMonitorInfo()
+		moreSet := getCurrentSettingsForCurrentMonitors()
+		allinfo := GUIInfo{possSet, currSet, moreSet}
+		fmt.Println(allinfo)
+
+		myApp := app.New()
+		w := myApp.NewWindow("Box Window Test")
+
+		comp1 := canvas.NewRectangle(color.NRGBA{0, 255, 255, 255})
+
+		//labels for dropdowns
+		t1, t2 := widget.NewLabel("Resolution"), widget.NewLabel("Refresh Rate")
+
+		//dropdowns here
+		options := make([]string, 2)
+		options[0], options[1] = "number 1", "numer2"
+		s1 := widget.NewSelect(options, dummyfunc)
+		s2 := widget.NewSelect(options, dummyfunc)
+
+		//apply, save, load buttons here
+		b1, b2 := widget.NewButton("b1", stupidfunc), widget.NewButton("b2", stupidfunc)
+
+		//putting them together into rows
+		//canvas
+		//resolution + resolution dropdown
+		//refresh rate + refresh rate dropdown
+		comp2 := container.New(layout.NewGridLayout(2), t1, s1)
+		comp25 := container.New(layout.NewGridLayout(2), t2, s2)
+		comp3 := container.NewHBox(layout.NewSpacer(), b1, b2)
+
+		altogether := container.NewVBox(comp1, comp2, comp25, comp3)
+		alltogether := container.NewCenter(altogether)
+		w.SetContent(alltogether)
+
+		w.Resize(fyne.NewSize(500, 500))
+		w.ShowAndRun()
+	*/
+}
+
+func stupidfunc() {
+	fmt.Println("Button pressed")
+}
+func dummyfunc(passed string) {
+	fmt.Println("In Select callback. Selected: ", passed)
 }
