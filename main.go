@@ -2,11 +2,30 @@ package main
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"syscall"
 	"unsafe"
+
+	"sort"
+
+	"image/color"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/widget"
 )
 
 const (
+	//dmDisplayOrientation consts (The degrees measurement is when rotate 90 degrees)
+	DMDO_DEFAULT = 0
+	DMDO_90      = 1
+	DMDO_180     = 2
+	DMDO_270     = 3
+
 	//enum display device consts
 	DISPLAY_DEVICE_ATTACHED_TO_DESKTOP = 1
 
@@ -27,7 +46,7 @@ var (
 	procGetMonitorInfoA        = user32DLL.NewProc("GetMonitorInfoA")      //params are hmonitor, lpmonitorinfo
 )
 
-//has all the info we need to run the GUI application, including active monitors, their settings
+// has all the info we need to run the GUI application, including active monitors, their settings
 // and all possible settings
 type GUIInfo struct {
 	possibleSettings []SettingConfigList
@@ -53,7 +72,7 @@ type Rect struct {
 	bottom int32
 }
 
-//must set cb when calling EnumDispDevA
+// must set cb when calling EnumDispDevA
 type DispDevA struct {
 	cb           uint32 //size of struct should be 3376 bits, 424 bytes
 	DeviceName   [32]uint8
@@ -72,22 +91,22 @@ func dumpDispDev(dd *DispDevA) {
 	fmt.Println("DeviceKey: ", string(dd.DeviceKey[0:]))
 }
 
-//https://docs.microsoft.com/en-us/windows/win32/api/windef/ns-windef-pointl
+// https://docs.microsoft.com/en-us/windows/win32/api/windef/ns-windef-pointl
 type pointl struct {
 	x int32
 	y int32
 }
 
-//https://docs.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-devmodea
+// https://docs.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-devmodea
 type dummyStructName2 struct {
 	dmPosition           pointl
 	dmDisplayOrientation uint32
 	dmDisplayFixedOutput uint32
 }
 
-//https://docs.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-devmodea
-//must set dmSize when calling ChangeDisplaySettingsA
-//one thing i have not determined is how size of devmode will work
+// https://docs.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-devmodea
+// must set dmSize when calling ChangeDisplaySettingsA
+// one thing i have not determined is how size of devmode will work
 type DevMode struct {
 	dmDeviceName    [CCHDEVICENAME]byte
 	dmSpecVersion   uint16
@@ -137,6 +156,8 @@ func dumpDevMode(dm *DevMode) {
 	fmt.Println("dmPelsWiddth: ", dm.dmPelsWidth)
 	fmt.Println("dmPelsHeight: ", dm.dmPelsHeight)
 	fmt.Println("dmDisplayFrequency: ", dm.dmDisplayFrequency)
+	fmt.Println("dmDisplayOrientation: ", dm.dummyUnionName.dmDisplayOrientation)
+	fmt.Println("dmPointl: ", dm.dummyUnionName.dmPosition)
 }
 
 // StringToCharPtr converts a Go string into pointer to a null-terminated cstring.
@@ -150,7 +171,7 @@ func StringToCharPtr(str string) *uint8 {
 	return &chars[0]
 }
 
-//this is just a simplified wrapper of the Windows method to get the display adapters
+// this is just a simplified wrapper of the Windows method to get the display adapters
 func enumDispDev(lpDevice string, iDevNum uint32, lpDisplayDevice *DispDevA, dwFlags uint32) uintptr {
 	lpDisplayDevice.cb = uint32(unsafe.Sizeof(*lpDisplayDevice))
 
@@ -166,7 +187,7 @@ func enumDispDev(lpDevice string, iDevNum uint32, lpDisplayDevice *DispDevA, dwF
 	return r1
 }
 
-//returns an array containing all attached devices to any display adapter
+// returns an array containing all attached devices to any display adapter
 func queryDisplayAdapters() []DispDevA {
 	result := make([]DispDevA, 0)
 
@@ -187,7 +208,7 @@ func queryDisplayAdapters() []DispDevA {
 	return result
 }
 
-//returns an array containing attached devices to a display adapter
+// returns an array containing attached devices to a display adapter
 func queryMonAttToDispAdapters(iDevNum uint32) ([]DispDevA, uintptr) {
 	result := make([]DispDevA, 0)
 
@@ -216,7 +237,7 @@ func queryMonAttToDispAdapters(iDevNum uint32) ([]DispDevA, uintptr) {
 	return result, 5 //5 just needs to be a nonzero number
 }
 
-//might just return a bunch of displays, or might queary all display adapters
+// might just return a bunch of displays, or might queary all display adapters
 func shallowQueryDisplays() []DispDevA {
 	result := make([]DispDevA, 0)
 	var fail bool = false
@@ -244,8 +265,8 @@ func getActiveMonitors() []DispDevA {
 	return result
 }
 
-//this func is a wrapper for EnumDisplaySettingsA windows api function.
-//we use it to get the possible settings for a display
+// this func is a wrapper for EnumDisplaySettingsA windows api function.
+// we use it to get the possible settings for a display
 func enumDisplaySettings(lpszDeviceName string, iModeNum uint32, lpDevMode *DevMode) uintptr {
 	lpDevMode.dmSize = uint16(unsafe.Sizeof(lpDevMode))
 
@@ -258,8 +279,8 @@ func enumDisplaySettings(lpszDeviceName string, iModeNum uint32, lpDevMode *DevM
 	return r1
 }
 
-//should get list of possible settings
-//if I want to optimize this, I might create a smaller structure than Devmode to fill this
+// should get list of possible settings
+// if I want to optimize this, I might create a smaller structure than Devmode to fill this
 func getPossibleSettingsForMonitor(lpszDeviceName string) []DevMode {
 	result := make([]DevMode, 0)
 
@@ -276,9 +297,9 @@ func getPossibleSettingsForMonitor(lpszDeviceName string) []DevMode {
 	return result
 }
 
-//@return each key is a monitor and then all its possible configurations as the value
+// @return each key is a monitor and then all its possible configurations as the value
 func getSettingsConfigList(monitors *[]DispDevA) []SettingConfigList {
-	result := make([]SettingConfigList, 1)
+	result := make([]SettingConfigList, 0)
 	for i := range *monitors {
 		temp := SettingConfigList{(*monitors)[i], getPossibleSettingsForMonitor(string((*monitors)[i].DeviceName[0:]))}
 		result = append(result, temp)
@@ -297,9 +318,9 @@ func getCurrentSettingsForCurrentMonitors() []DevMode {
 	return result
 }
 
-//I can enumerate the monitors I need here.
-//the callback function should be called per monitor
-//it's a little janky, and not giving me position info, so we use GetMonitor now!
+// I can enumerate the monitors I need here.
+// the callback function should be called per monitor
+// it's a little janky, and not giving me position info, so we use GetMonitor now!
 func enumDisplayMonitors() Monitors {
 	monin := Monitors{make([]syscall.Handle, 0), make([]syscall.Handle, 0), make([]*Rect, 0)}
 	monproccallback := syscall.NewCallback(monitorEnumProc)
@@ -318,7 +339,7 @@ func enumDisplayMonitors() Monitors {
 	return monin
 }
 
-//callback function for enumDIsplayMonitors
+// callback function for enumDIsplayMonitors
 func monitorEnumProc(hMonitor syscall.Handle, hdc syscall.Handle, rect *Rect, inform *Monitors) uintptr {
 	inform.hdc = append(inform.hdc, hdc)
 	inform.hmonitor = append(inform.hmonitor, hMonitor)
@@ -326,8 +347,8 @@ func monitorEnumProc(hMonitor syscall.Handle, hdc syscall.Handle, rect *Rect, in
 	return 500 //random value lol
 }
 
-//wrapper for you know it, GetMonitorInfoA
-//i do not know if i need to pass handles with unsafe.Pointer, but assuming i dont for right now
+// wrapper for you know it, GetMonitorInfoA
+// i do not know if i need to pass handles with unsafe.Pointer, but assuming i dont for right now
 func GetMonitorInfo(hMonitor syscall.Handle) MonitorInfo {
 	temp := MonitorInfo{}
 	temp.cbSize = uint32(unsafe.Sizeof(temp))
@@ -343,7 +364,7 @@ func GetMonitorInfo(hMonitor syscall.Handle) MonitorInfo {
 }
 
 func GetAllMonitorInfo() []MonitorInfo {
-	result := make([]MonitorInfo, 1)
+	result := make([]MonitorInfo, 0)
 
 	monitors := enumDisplayMonitors()
 	for i := range monitors.hmonitor {
@@ -390,8 +411,8 @@ func main() {
 
 	/*
 		//test for getting all settings of a monitor
-		monitors := getActiveMonitors()
-		settings := getPossibleSettingsForMonitor(string(monitors[0].DeviceName[0:]))
+		monitor := getActiveMonitors()
+		settings := getPossibleSettingsForMonitor(string(monitor[0].DeviceName[0:]))
 		for i := range settings {
 			dumpDevMode(&settings[i])
 		}
@@ -400,8 +421,10 @@ func main() {
 	/*
 		//testing getting all possible settings for all monitors
 		monitors := getActiveMonitors()
-		list := getSettingsConfigs(&monitors)
-		fmt.Println(list)
+		list := getSettingsConfigList(&monitors)
+		for i := range list[0].settingsList {
+			fmt.Println(list[0].settingsList[i])
+		}
 	*/
 
 	/*
@@ -417,58 +440,181 @@ func main() {
 		fmt.Println(GetMonitorInfo(enumDisplayMonitors().hmonitor[1]).rcWork)
 	*/
 
-	//getting curr settings
+	/*
+		//getting curr settings
+		moreeSet := getCurrentSettingsForCurrentMonitors()
+		for i := range moreeSet {
+			dumpDevMode(&moreeSet[i])
+		}
+	*/
+
+	//lets get the info we need for our GUI app
+	monitors := getActiveMonitors()
+	possSet := getSettingsConfigList(&monitors)
+	currSet := GetAllMonitorInfo()
 	moreSet := getCurrentSettingsForCurrentMonitors()
-	for i := range moreSet {
-		dumpDevMode(&moreSet[i])
+	allinfo := GUIInfo{possSet, currSet, moreSet}
+	fmt.Println(allinfo.possibleSettings[0].monitor.DeviceString)
+
+	dmSetting := make([]DevMode, len(monitors))
+	//monitorPos:= make([]Rect, len(monitors))
+
+	//let's generate the options list
+	//options[monitorindex][optionnumber]
+	//note: repeats should happen in succession if at all
+	resolutionOptions := make([][]string, len(monitors))
+	for i := range resolutionOptions {
+		resolutionOptions[i] = make([]string, 0)
+		for j := range possSet[i].settingsList {
+			//We do not WANT REPEAT RESOLUTIONS
+			//all copies are adjacent, so we just look at the last element
+			str := strconv.Itoa(int(possSet[i].settingsList[j].dmPelsWidth)) + " x " + strconv.Itoa(int(possSet[i].settingsList[j].dmPelsHeight))
+
+			if j > 0 && resolutionOptions[i][len(resolutionOptions[i])-1] != str {
+				resolutionOptions[i] = append(resolutionOptions[i], str)
+			} else if j == 0 { //when j is 0, we still need to add
+				resolutionOptions[i] = append(resolutionOptions[i], str)
+			}
+		}
+	}
+	frequencyOptions := make([][]string, len(monitors))
+	for i := range frequencyOptions {
+		frequencyOptions[i] = make([]string, 0)
+		for j := range possSet[i].settingsList {
+			//WE DO NOT WANT REPEAT FREQUENCY OPTIONS
+			str := strconv.Itoa(int(possSet[i].settingsList[j].dmDisplayFrequency)) + " Hz"
+			frequencyOptions[i] = append(frequencyOptions[i], str)
+		}
+		//lets sort it in numerical order
+		sort.Strings(frequencyOptions[i])
+		frequencyOptions[i] = removeDupes(&frequencyOptions[i])
 	}
 
-	/*
-		//lets get the info we need for our GUI app
-		//monitors := getActiveMonitors()
-		possSet := getSettingsConfigList(&monitors)
-		currSet := GetAllMonitorInfo()
-		moreSet := getCurrentSettingsForCurrentMonitors()
-		allinfo := GUIInfo{possSet, currSet, moreSet}
-		fmt.Println(allinfo)
+	myApp := app.New()
+	w := myApp.NewWindow("Box Window Test")
 
-		myApp := app.New()
-		w := myApp.NewWindow("Box Window Test")
+	comp1 := canvas.NewRectangle(color.NRGBA{0, 255, 255, 255})
+	comp1.SetMinSize(fyne.NewSize(400, 100))
 
-		comp1 := canvas.NewRectangle(color.NRGBA{0, 255, 255, 255})
+	//dropdowns and labels for dropdowns here
+	//the basic idea is we do an iteration for the number of monitors
+	//assembling array for grid use
+	widgets := make([]fyne.CanvasObject, 0)
+	numWidgets := 8
+	for i := range monitors {
+		widgets = append(widgets, widget.NewLabel("Monitor "+strconv.Itoa(i+1)+":"))
+		widgets = append(widgets, widget.NewLabel(""))
 
-		//labels for dropdowns
-		t1, t2 := widget.NewLabel("Resolution"), widget.NewLabel("Refresh Rate")
+		//NOTE: Refresh Rate options will change based on option selected for resolution
+		widgets = append(widgets, widget.NewLabel("Resolution"))
+		widgets = append(widgets, widget.NewSelect(resolutionOptions[i], func(j int) func(string) {
+			i := j
+			return func(sel string) {
+				//parsing the string for the resolution
+				divider := strings.Index(sel, "x")
+				x, _ := strconv.Atoi(sel[:divider-1])
+				xx := uint32(x)
+				y, _ := strconv.Atoi(sel[divider+2:])
+				yy := uint32(y)
+				if (dmSetting[i] == DevMode{}) {
+					dmSetting[i] = allinfo.moreCurrSettings[i]
+				}
+				dmSetting[i].dmPelsWidth = xx
+				dmSetting[i].dmPelsHeight = yy
 
-		//dropdowns here
-		options := make([]string, 2)
-		options[0], options[1] = "number 1", "numer2"
-		s1 := widget.NewSelect(options, dummyfunc)
-		s2 := widget.NewSelect(options, dummyfunc)
+				//updating the possible frequencies
+				newList := make([]string, 0)
+				for j := range allinfo.possibleSettings[i].settingsList {
+					//check to see if resolution matches
+					if allinfo.possibleSettings[i].settingsList[j].dmPelsHeight == dmSetting[i].dmPelsHeight && allinfo.possibleSettings[i].settingsList[j].dmPelsWidth == dmSetting[i].dmPelsWidth {
+						str := strconv.Itoa(int(allinfo.possibleSettings[i].settingsList[j].dmDisplayFrequency)) + " Hz"
+						//for each match, add the frequency into the new list, making sure they are unique
+						if len(newList) > 0 && newList[len(newList)-1] != str {
+							newList = append(newList, str)
+						} else if len(newList) == 0 {
+							newList = append(newList, str)
+						}
+					}
+				}
+				frequencyOptions[i] = newList
+				widgets[numWidgets*i+5] = widget.NewSelect(frequencyOptions[i], func(sel string) {
+					if (dmSetting[i] == DevMode{}) {
+						dmSetting[i] = allinfo.moreCurrSettings[i]
+					}
+					freqstr, _ := strconv.Atoi(sel[:len(sel)-3]) // we want to take the " Hz" off the end of the string
+					dmSetting[i].dmDisplayFrequency = uint32(freqstr)
+				})
+			}
+		}(i)))
 
-		//apply, save, load buttons here
-		b1, b2 := widget.NewButton("b1", stupidfunc), widget.NewButton("b2", stupidfunc)
+		widgets = append(widgets, widget.NewLabel("Refresh Rate"))
+		widgets = append(widgets, widget.NewSelect(frequencyOptions[i], func(sel string) {
+			if (dmSetting[i] == DevMode{}) {
+				dmSetting[i] = allinfo.moreCurrSettings[i]
+			}
+			freqstr, _ := strconv.Atoi(sel[:len(sel)-3]) // we want to take the " Hz" off the end of the string
+			dmSetting[i].dmDisplayFrequency = uint32(freqstr)
+		})) //NOW NOTE. THERE IS NO CLOSURE HERE KEEPING TRACK OF i WHEN THESE DROPDOWNS ARE FIRST CREATED. Should be a non problem though because the ones above are fine
 
-		//putting them together into rows
-		//canvas
-		//resolution + resolution dropdown
-		//refresh rate + refresh rate dropdown
-		comp2 := container.New(layout.NewGridLayout(2), t1, s1)
-		comp25 := container.New(layout.NewGridLayout(2), t2, s2)
-		comp3 := container.NewHBox(layout.NewSpacer(), b1, b2)
+		widgets = append(widgets, widget.NewLabel("Orientation"))
+		orientationList := []string{"Landscape", "Landscape (flipped)", "Portrait", "Portrait (flipped)"}
+		widgets = append(widgets, widget.NewSelect(orientationList, func(j int) func(string) {
+			i := j
+			return func(sel string) {
+				if (dmSetting[i] == DevMode{}) {
+					dmSetting[i] = allinfo.moreCurrSettings[i]
+				}
+				switch sel {
+				case orientationList[0]:
+					dmSetting[i].dummyUnionName.dmDisplayOrientation = DMDO_DEFAULT
+				case orientationList[1]:
+					dmSetting[i].dummyUnionName.dmDisplayOrientation = DMDO_180
+				case orientationList[2]:
+					dmSetting[i].dummyUnionName.dmDisplayOrientation = DMDO_90
+				case orientationList[3]:
+					dmSetting[i].dummyUnionName.dmDisplayOrientation = DMDO_270
+				}
+			}
+		}(i)))
+	}
 
-		altogether := container.NewVBox(comp1, comp2, comp25, comp3)
-		alltogether := container.NewCenter(altogether)
-		w.SetContent(alltogether)
+	//apply, save, load buttons here
+	b1, b2, b3 := widget.NewButton("Save", saveButton), widget.NewButton("Load", loadButton), widget.NewButton("Apply", applyButton)
 
-		w.Resize(fyne.NewSize(500, 500))
-		w.ShowAndRun()
-	*/
+	//putting them together into rows
+	//canvas
+	//resolution + resolution dropdown
+	//refresh rate + refresh rate dropdown
+	comp2 := container.New(layout.NewGridLayout(2), widgets...)
+	comp3 := container.NewHBox(layout.NewSpacer(), b1, b2, b3)
+
+	altogether := container.NewVBox(comp1, comp2, comp3)
+	alltogether := container.NewCenter(altogether)
+	w.SetContent(alltogether)
+
+	w.Resize(fyne.NewSize(500, 500))
+	w.ShowAndRun()
+
 }
 
-func stupidfunc() {
-	fmt.Println("Button pressed")
+// assuming sorted and thus adjacent entries
+func removeDupes(slice *[]string) []string {
+	result := make([]string, 0)
+	result = append(result, (*slice)[0])
+	for i := 1; i < len(*slice); i++ {
+		if result[len(result)-1] != (*slice)[i] {
+			result = append(result, (*slice)[i])
+		}
+	}
+	return result
 }
-func dummyfunc(passed string) {
-	fmt.Println("In Select callback. Selected: ", passed)
+
+func loadButton() {
+	fmt.Println("loading")
+}
+func saveButton() {
+	fmt.Println("Saving")
+}
+func applyButton() {
+	fmt.Println("Applying")
 }
