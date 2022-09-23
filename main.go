@@ -493,18 +493,91 @@ func main() {
 	myApp := app.New()
 	w := myApp.NewWindow("Box Window Test")
 
-	comp1 := canvas.NewRectangle(color.NRGBA{0, 255, 255, 255})
-	comp1.SetMinSize(fyne.NewSize(400, 100))
+	//determ size of monitors  - will be determined by dmPelsWidth/dmLogPixel and dmPelsHeight/dmLogPixel
+	//we are converting from resolution coordinate space to a coordinate space based on inches and then to a coordinate space based on our component
+	//get positions of monitors and largest sizes
+	//too lazy to make a pair struct
+	heights, widths, xPos, yPos := make([]float32, len(monitors)), make([]float32, len(monitors)), make([]float32, len(monitors)), make([]float32, len(monitors))
+	var largestMeasurement float32
+	for i := range monitors {
+		heights[i], widths[i] = float32(allinfo.moreCurrSettings[i].dmPelsHeight)/88, float32(allinfo.moreCurrSettings[i].dmPelsWidth)/88
+		xPos[i], yPos[i] = float32(allinfo.moreCurrSettings[i].dummyUnionName.dmPosition.x)/88, float32(allinfo.moreCurrSettings[i].dummyUnionName.dmPosition.y)/88
+		if heights[i] > largestMeasurement {
+			largestMeasurement = heights[i]
+		}
+		if widths[i] > largestMeasurement {
+			largestMeasurement = widths[i]
+		}
+		fmt.Println("dmLogPixels: ", 88)
+	}
+	fmt.Println("heights: ", heights)
+	fmt.Println("widths: ", widths)
+	//let's normalize the coordinate system by dividing by the largest height or length
+	for i := range monitors {
+		heights[i], widths[i] = heights[i]/largestMeasurement, widths[i]/largestMeasurement
+		xPos[i], yPos[i] = xPos[i]/largestMeasurement, yPos[i]/largestMeasurement
+	}
+
+	//get largest values in coordinate system
+	var maxXPos float32
+	var maxYPos float32
+	for i := range monitors {
+		if (widths[i] + xPos[i]) > maxXPos {
+			maxXPos = widths[i] + xPos[i]
+		}
+		if (heights[i] + yPos[i]) > maxYPos {
+			maxYPos = heights[i] + yPos[i]
+		}
+	}
+
+	//we now have all information needed to draw monitors
+	//sizes of the resulting everything will be based on baseRect!
+	//the width and height scales will turn the normalized size based coordinate system into the actual coordinate system used for display
+
+	//make the container
+	baseRect := canvas.NewRectangle(color.NRGBA{0, 255, 255, 255})
+	comp1 := container.NewWithoutLayout(baseRect)
+
+	var l float32 = 400
+	var h float32 = 100
+	//comp1.Resize(fyne.NewSize(l, h))
+	baseRect.SetMinSize(fyne.NewSize(l, h))
+	baseRect.Resize(fyne.NewSize(l, h))
+
+	var xPercentOfContainerScale float32 = 0.3
+	//var yPercentOfContainerScale float32 = 0.3
+	//note to self, right now I am scaling both x and y separately, which destroys aspect ratio
+	//we are going to try just scaling with x, because that will typically be bigger
+	xScale := l * xPercentOfContainerScale / maxXPos
+	yScale := xScale //h * yPercentOfContainerScale / maxYPos
+	xMargin := l * (1 - xPercentOfContainerScale) / 2
+	yMargin := h / 8
+	fmt.Println("heights: ", heights)
+	fmt.Println("widths: ", widths)
+	fmt.Println("maxXPos: ", maxXPos, "maxYPos:", maxYPos)
+	fmt.Println("xScale: ", xScale, "yScale: ", yScale, "xMargin: ", xMargin, "yMargin: ", yMargin)
+
+	//let's create all the rectangles, add them, resize them, and position them
+	monReps := make([]*canvas.Rectangle, len(monitors))
+	for i := range monitors {
+		monReps[i] = canvas.NewRectangle(color.NRGBA{0, 0, 255, 255})
+		comp1.Add(monReps[i])
+		monReps[i].Resize(fyne.NewSize(widths[i]*xScale, heights[i]*yScale))
+		monReps[i].Move(fyne.NewPos(xMargin+xPos[i]*xScale, yMargin+yPos[i]*yScale))
+		monReps[i].SetMinSize(fyne.NewSize(widths[i]*xScale, heights[i]*yScale))
+		fmt.Println("added monitor rectangle!! Size: ", monReps[i].Size(), " Position: ", monReps[i].Position())
+		defer fmt.Println("IT ENDS UP AS: Size: ", monReps[i].Size(), " Position: ", monReps[i].Position())
+	}
+	r := comp1.Size()
+	r.Height = yMargin*2 + maxYPos*yScale
+	comp1.Resize(r)
 
 	//dropdowns and labels for dropdowns here
 	//the basic idea is we do an iteration for the number of monitors
 	//assembling array for grid use
 	widgets := make([]fyne.CanvasObject, 0)
-	numWidgets := 8
+	numWidgets := 6
 	for i := range monitors {
-		widgets = append(widgets, widget.NewLabel("Monitor "+strconv.Itoa(i+1)+":"))
-		widgets = append(widgets, widget.NewLabel(""))
-
 		//NOTE: Refresh Rate options will change based on option selected for resolution
 		widgets = append(widgets, widget.NewLabel("Resolution"))
 		widgets = append(widgets, widget.NewSelect(resolutionOptions[i], func(j int) func(string) {
@@ -581,11 +654,14 @@ func main() {
 	//apply, save, load buttons here
 	b1, b2, b3 := widget.NewButton("Save", saveButton), widget.NewButton("Load", loadButton), widget.NewButton("Apply", applyButton)
 
-	//putting them together into rows
-	//canvas
-	//resolution + resolution dropdown
-	//refresh rate + refresh rate dropdown
-	comp2 := container.New(layout.NewGridLayout(2), widgets...)
+	//we will now create the respective a tab for each monitor, with a grid of display options for that monitor
+	tabItems := make([]*container.TabItem, 0)
+	for i := range monitors {
+		tabItems = append(tabItems, container.NewTabItem("Monitor "+strconv.Itoa(i+1), container.New(layout.NewGridLayout(2), widgets[i*numWidgets:(i+1)*numWidgets]...)))
+	}
+	comp2 := container.NewAppTabs(tabItems...)
+
+	//button tabs
 	comp3 := container.NewHBox(layout.NewSpacer(), b1, b2, b3)
 
 	altogether := container.NewVBox(comp1, comp2, comp3)
@@ -593,7 +669,7 @@ func main() {
 	w.SetContent(alltogether)
 
 	w.Resize(fyne.NewSize(500, 500))
-	w.ShowAndRun()
+	defer w.ShowAndRun()
 
 }
 
