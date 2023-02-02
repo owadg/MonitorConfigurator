@@ -2,7 +2,10 @@ module modconf
 
 go 1.18
 
-require fyne.io/fyne/v2 v2.2.3
+require (
+	fyne.io/fyne v1.4.3
+	fyne.io/fyne/v2 v2.2.3
+)
 
 require (
 	fyne.io/systray v1.10.1-0.20220621085403-9a2652634e93 // indirect
